@@ -1,4 +1,6 @@
 # 📡 AIVONEX Brand Monitoring & Sentiment Analysis System
+<img width="1600" height="726" alt="WhatsApp Image 2026-05-07 at 10 32 34 AM" src="https://github.com/user-attachments/assets/5031cf6b-1826-4a76-ac6f-c514899eca0e" />
+
 
 > **Built by AIVONEX SMC-PVT LTD** — Managed Data Intelligence & AI/ML Services
 
