@@ -144,6 +144,19 @@ GET    /reports/download/{id}     → Download PDF
 
 ---
 
+### Xquik CSV Uploads
+
+The CSV import page accepts Xquik tweet exports without manual renaming. It
+auto-detects fields such as `full_text`, `tweet_text`, `created_at`,
+`username`, `screen_name`, `like_count`, `retweet_count`, and `reply_count`,
+sets the source to `X` when Xquik tweet fields are present, and totals social
+interaction columns into the dashboard engagement metric.
+
+The importer now parses upload bytes in memory, so dashboard uploads no longer
+need a temporary file round trip.
+
+---
+
 ## 📊 Metrics Explained
 
 | Metric | Range | Meaning |

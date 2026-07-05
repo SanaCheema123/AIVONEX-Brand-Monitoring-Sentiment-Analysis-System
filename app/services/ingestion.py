@@ -58,6 +58,25 @@ AUTHORS = [
     "cto_thoughts", "ux_designer_p", "product_hunter", "enterprise_lead",
 ]
 
+CSV_COLUMN_ALIASES = {
+    "text": [
+        "text", "full_text", "tweet_text", "content", "post",
+        "review", "comment", "message", "body",
+    ],
+    "date": ["mention_date", "created_at", "timestamp", "published_at", "date"],
+    "source": ["source", "platform", "network"],
+    "author": ["author", "username", "user", "screen_name", "handle"],
+    "engagement": [
+        "engagement", "likes", "like_count", "retweets", "retweet_count",
+        "replies", "reply_count", "quotes", "quote_count", "upvotes",
+    ],
+}
+
+XQUIK_EXPORT_MARKERS = {
+    "tweet_id", "full_text", "tweet_text", "retweet_count",
+    "like_count", "screen_name",
+}
+
 
 class DataIngestionService:
 
@@ -66,22 +85,43 @@ class DataIngestionService:
     def parse_csv(self, file_path: str, text_column: str = "text",
                   date_column: Optional[str] = None,
                   source_column: Optional[str] = None,
-                  author_column: Optional[str] = None) -> list[dict]:
+                  author_column: Optional[str] = None,
+                  engagement_column: Optional[str] = None) -> list[dict]:
         """
         Parse a CSV file and return list of mention dicts.
         Required column: text_column (defaults to 'text')
         """
         df = pd.read_csv(file_path)
-        df.columns = [c.strip().lower() for c in df.columns]
+        records = self._records_from_dataframe(
+            df,
+            text_column=text_column,
+            date_column=date_column,
+            source_column=source_column,
+            author_column=author_column,
+            engagement_column=engagement_column,
+        )
+        logger.info(f"CSV parsed: {len(records)} valid records from '{file_path}'")
+        return records
 
-        if text_column not in df.columns:
-            # Try to auto-detect
-            text_col = next(
-                (c for c in df.columns if any(k in c for k in ["text", "content", "post", "review", "comment", "message"])),
-                df.columns[0]
-            )
-        else:
-            text_col = text_column
+    def parse_csv_bytes(self, content: bytes, **kwargs) -> list[dict]:
+        import io
+        df = pd.read_csv(io.BytesIO(content))
+        return self._records_from_dataframe(df, **kwargs)
+
+    def _records_from_dataframe(self, df: pd.DataFrame, text_column: str = "text",
+                                date_column: Optional[str] = None,
+                                source_column: Optional[str] = None,
+                                author_column: Optional[str] = None,
+                                engagement_column: Optional[str] = None) -> list[dict]:
+        df.columns = [c.strip().lower() for c in df.columns]
+        columns = list(df.columns)
+
+        text_col = self._select_column(columns, text_column, CSV_COLUMN_ALIASES["text"]) or columns[0]
+        date_col = self._select_column(columns, date_column, CSV_COLUMN_ALIASES["date"])
+        source_col = self._select_column(columns, source_column, CSV_COLUMN_ALIASES["source"])
+        author_col = self._select_column(columns, author_column, CSV_COLUMN_ALIASES["author"])
+        engagement_col = self._select_column(columns, engagement_column, []) if engagement_column else None
+        default_source = "X" if XQUIK_EXPORT_MARKERS.intersection(columns) else "CSV"
 
         records = []
         for _, row in df.iterrows():
@@ -89,23 +129,28 @@ class DataIngestionService:
             if not text or text.lower() == "nan":
                 continue
 
+            source = default_source
+            if source_col:
+                source = self._clean_cell(row.get(source_col, default_source), default_source)
+
+            author = "unknown"
+            if author_col:
+                author = self._clean_cell(row.get(author_col, "unknown"), "unknown")
+
+            mention_date = datetime.utcnow().isoformat()
+            if date_col:
+                mention_date = self._parse_date(str(row.get(date_col, "")))
+
             record = {
                 "text":   text,
-                "source": str(row.get(source_column, "CSV")).strip() if source_column and source_column in df.columns else "CSV",
-                "author": str(row.get(author_column, "unknown")).strip() if author_column and author_column in df.columns else "unknown",
-                "mention_date": self._parse_date(str(row.get(date_column, ""))),
-                "engagement": int(row.get("engagement", row.get("likes", row.get("upvotes", 0)))) if True else 0,
+                "source": source,
+                "author": author,
+                "mention_date": mention_date,
+                "engagement": self._row_engagement(row, engagement_col),
             }
             records.append(record)
 
-        logger.info(f"CSV parsed: {len(records)} valid records from '{file_path}'")
         return records
-
-    def parse_csv_bytes(self, content: bytes, **kwargs) -> list[dict]:
-        import io
-        df = pd.read_csv(io.BytesIO(content))
-        df.to_csv("/tmp/_bm_upload.csv", index=False)
-        return self.parse_csv("/tmp/_bm_upload.csv", **kwargs)
 
     # ── Simulated Social Feed ─────────────────────────────────────────────────
 
@@ -163,6 +208,46 @@ class DataIngestionService:
         }
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _normalize_column(self, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.strip().lower()
+
+    def _select_column(self, columns: list[str], preferred: Optional[str], aliases: list[str]) -> Optional[str]:
+        preferred_column = self._normalize_column(preferred)
+        if preferred_column and preferred_column in columns:
+            return preferred_column
+        for alias in aliases:
+            if alias in columns:
+                return alias
+        return None
+
+    def _clean_cell(self, value, fallback: str) -> str:
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            return fallback
+        return text
+
+    def _parse_int(self, value) -> int:
+        try:
+            return int(float(str(value).replace(",", "").strip()))
+        except (TypeError, ValueError):
+            return 0
+
+    def _row_engagement(self, row, engagement_column: Optional[str]) -> int:
+        if engagement_column:
+            return self._parse_int(row.get(engagement_column, 0))
+
+        direct_engagement = self._parse_int(row.get("engagement", 0))
+        if direct_engagement:
+            return direct_engagement
+
+        return sum(
+            self._parse_int(row.get(column, 0))
+            for column in CSV_COLUMN_ALIASES["engagement"]
+            if column != "engagement"
+        )
 
     def _parse_date(self, date_str: str) -> str:
         for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%dT%H:%M:%S"]:

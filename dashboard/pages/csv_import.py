@@ -59,11 +59,11 @@ def render():
         st.markdown("#### ⚙️ Column Mapping")
         cols = list(df_preview.columns)
         default_text = next(
-            (c for c in cols if any(k in c.lower() for k in ["text", "content", "review", "post", "comment"])),
+            (c for c in cols if any(k in c.lower() for k in ["text", "full_text", "tweet_text", "content", "review", "post", "comment"])),
             cols[0]
         )
 
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
             text_col   = st.selectbox("Text Column *", cols,
                                        index=cols.index(default_text))
@@ -74,11 +74,15 @@ def render():
             author_col = st.selectbox("Author Column (optional)",
                                        ["(none)"] + cols)
         with c4:
+            date_col = st.selectbox("Date Column (optional)",
+                                    ["(none)"] + cols)
+        with c5:
             engage_col = st.selectbox("Engagement Column (optional)",
                                        ["(none)"] + cols)
 
         source_col = None if source_col == "(none)" else source_col
         author_col = None if author_col == "(none)" else author_col
+        date_col = None if date_col == "(none)" else date_col
         engage_col = None if engage_col == "(none)" else engage_col
 
         st.markdown("---")
@@ -89,18 +93,14 @@ def render():
             ingestion = get_ingestion_service()
 
             with st.spinner("Parsing and analyzing... please wait"):
-                records = []
-                for _, row in df_preview.iterrows():
-                    text = str(row.get(text_col, "")).strip()
-                    if not text or text.lower() in ("nan", ""):
-                        continue
-                    rec = {
-                        "text":       text,
-                        "source":     str(row[source_col]) if source_col and source_col in row else "CSV",
-                        "author":     str(row[author_col]) if author_col and author_col in row else "unknown",
-                        "engagement": int(row[engage_col]) if engage_col and engage_col in row else 0,
-                    }
-                    records.append(rec)
+                records = ingestion.parse_csv_bytes(
+                    content,
+                    text_column=text_col,
+                    date_column=date_col,
+                    source_column=source_col,
+                    author_column=author_col,
+                    engagement_column=engage_col,
+                )
 
                 if not records:
                     st.error("No valid text rows found in the file.")
@@ -131,6 +131,13 @@ def render():
         ],
         "source": ["Twitter", "Reddit", "Review Site", "LinkedIn", "Forum"],
         "author": ["user_a", "user_b", "user_c", "user_d", "user_e"],
+        "created_at": [
+            "2026-07-05T12:00:00",
+            "2026-07-05T13:00:00",
+            "2026-07-05T14:00:00",
+            "2026-07-05T15:00:00",
+            "2026-07-05T16:00:00",
+        ],
         "engagement": [250, 45, 12, 180, 30],
     })
 
